@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 # -*- coding: utf-8 -*-
 # pylint: disable=E1102
 
@@ -37,7 +37,9 @@ browser.addheaders = [('User-agent', 'Firefox')]
     
     
 def insert_doi(file_str, key, doi):
-    return file_str.replace(key + ",\n", key + ",\n  doi = {" + doi + "},\n")
+    search = key + ","
+    replace = key + ",\n  doi = {" + doi + "},"
+    return file_str.replace(search, replace)
 
 def detex(tex_str):
     '''
@@ -89,7 +91,8 @@ def crossref_auth_title_to_doi(author, title):
     # use only surname of first author
     browser["auth2"] = re.sub(r'[A-Z] ', ' ',
         re.sub(r'[^a-zA-Z0-9 ]+', ' ', author).split("and")[0])
-    browser["atitle2"] = re.sub(r'[^a-zA-Z0-9 ]+', ' ', title)
+    #browser["atitle2"] = re.sub(r'[^a-zA-Z0-9 ]+', ' ', title)
+    browser["atitle2"] = re.sub(r'[^a-zA-Z0-9,:. ]+', ' ', title)
     try: #I moved this        
         response = browser.submit()
         sourcecode = response.get_data()
@@ -97,11 +100,16 @@ def crossref_auth_title_to_doi(author, title):
         return find_doi(sourcecode)
     except:
         pass
-def google_title_to_doi(title):
+def google_author_title_to_doi(author, title):
     browser.open("http://scholar.google.com/")
     assert browser.viewing_html()
     browser.select_form(name="f")
-    browser["q"] = 'intitle:"{0}"'.format(title.strip())
+    query_string=""
+    if author:
+        query_string += ' author:"{0}"'.format(author.strip())
+    if title:
+        query_string += ' intitle:"{0}"'.format(title.strip())
+    browser["q"] = query_string
     response = browser.submit()
     browser.follow_link(text=title.strip())
     sourcecode = browser.response().get_data()
@@ -153,38 +161,49 @@ def bibfile_process(bibfile_name):
         
     for key, value in bib_sorted[:]:
         try:
-            author = detex(value.fields['author'])
+            author = ""
+            for author_person in value.persons['author']:
+                for lastname in author_person.last_names:
+                    author += lastname
+                    author += " "
+                author += " and "
             title = detex(value.fields['title'])
-            journal = value.fields['journaltitle']
-            volume = value.fields['volume']
-            pages = value.fields['pages']
-        except:
-            continue
-        doi = crossref_auth_title_to_doi(author, title)
-        if not doi:
-            if ("Appl. Phys. Lett." == journal) or ("J. Appl. Phys." == journal):
-                doi = google_aip_doi(volume, pages)
-        if not doi:
-            doi = google_doi(journal, volume, pages, title)
-        if doi:
-            lookup = doi_lookup(doi)
-            print "{0:40s}{1}".format(key, doi)
-            print title
-            print lookup
-            print fuzzy_match(lookup, title)
-            if (fuzzy_match(lookup, title) >= 0.9):
-                file_str = insert_doi(file_str, key, doi)
-            else:
-                print "Set this DOI?"
-                resp = raw_input()
-                if resp[0] == 'y':
+            doi = crossref_auth_title_to_doi(author, title)
+#            if not doi:
+#                doi = google_author_title_to_doi(author, title)
+
+            if not doi:
+                journal = value.fields['journal']
+                volume = value.fields['volume']
+                pages = value.fields['pages']
+
+                if ("Appl. Phys. Lett." == journal) or ("J. Appl. Phys." == journal):
+                    doi = google_aip_doi(volume, pages)
+                
+                if not doi:
+                    doi = google_doi(journal, volume, pages, title)
+            if doi:
+                lookup = doi_lookup(doi)
+                print "{0:40s}{1}".format(key, doi)
+                print title
+                print lookup
+                print fuzzy_match(lookup, title)
+                if (fuzzy_match(lookup, title) >= 0.9):
                     file_str = insert_doi(file_str, key, doi)
-                elif re.match(DOI_REGEX, resp, re.I):
-                    print "using DOI " + resp
-                    file_str = insert_doi(file_str, key, resp)
-            bibfile = codecs.open(bibfile_name + ".out", 'w', encoding='utf-8')
-            bibfile.write(file_str)
-            bibfile.close()
+                else:
+                    print "Set this DOI?"
+                    resp = raw_input()
+                    if resp[0] == 'y':
+                        file_str = insert_doi(file_str, key, doi)
+                    elif re.match(DOI_REGEX, resp, re.I):
+                        print "using DOI " + resp
+                        file_str = insert_doi(file_str, key, resp)
+        except:
+            print "could not read entry %s with values %s" % (key, value)
+
+    bibfile = codecs.open(bibfile_name + ".out", 'w', encoding='utf-8')
+    bibfile.write(file_str)
+    bibfile.close()
 
 if __name__ == '__main__':
     browser = mechanize.Browser()
